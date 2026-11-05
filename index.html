@@ -111,6 +111,22 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 .card h2{margin:6px 0 4px;font-size:1.8rem;font-weight:800}
 .card p{margin:0 0 16px;font-size:1.1rem}
 .card .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.levels{display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:100%;font-weight:700}
+.levels .lab{margin-right:2px}
+.lvl{font:inherit;font-weight:700;font-size:.95rem;cursor:pointer;border:2px solid var(--ink);background:#fff;color:var(--ink);padding:2px 12px;border-radius:999px}
+.lvl[aria-pressed="true"]{background:var(--ink);color:#fff}
+body.typing .zone:not(.ok){outline:3px dashed var(--accent-dark);outline-offset:-3px;cursor:text}
+body.typing .zone.editing{outline:none}
+.typer{position:absolute;z-index:30;transform:translateY(-50%);font:inherit;font-size:16px;font-weight:700;
+  padding:5px 9px;border:3px solid var(--accent-dark);border-radius:10px;background:#fff;color:var(--ink);
+  box-shadow:3px 4px 0 var(--accent-dark);outline:none;min-width:150px}
+.typer.bad{animation:shake .4s;border-color:var(--bad)}
+body.typing .chip{cursor:default;touch-action:auto}
+.chip.used{text-decoration:line-through;text-decoration-thickness:3px;opacity:.4;box-shadow:none}
+.msg{min-height:1.4em;margin:0 0 8px;font-weight:700;line-height:1.3}
+.msg.good{color:var(--ok)} .msg.badm{color:var(--bad)}
+.memo{display:none;margin:0 0 6px;font-weight:600;line-height:1.35}
+body.lvl-muy .bank{display:none} body.lvl-muy .memo{display:block}
 @keyframes pop{0%{transform:scale(.85)}60%{transform:scale(1.06)}100%{transform:scale(1)}}
 @keyframes shake{0%,100%{translate:0}25%{translate:-6px}75%{translate:6px}}
 @keyframes hint{50%{background:rgba(255,214,0,.55)}}
@@ -130,6 +146,8 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
   .bank{gap:8px}
   .chip{font-size:1rem;padding:5px 11px}
   .reset{margin-top:6px}
+  body.typing aside{position:static;margin-top:4px}
+  .lvl{font-size:.9rem;padding:2px 10px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -146,12 +164,20 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
     <button class="tab" role="tab" data-set="gusto" aria-selected="false">👅 Gusto</button>
     <button class="tab" role="tab" data-set="digestivo" aria-selected="false">🍎 Digestivo</button>
   </div>
+  <div class="levels" role="group" aria-label="Nivel">
+    <span class="lab">Nivel:</span>
+    <button class="lvl" data-lvl="facil" aria-pressed="true">🙂 Fácil</button>
+    <button class="lvl" data-lvl="dificil" aria-pressed="false">😎 Difícil</button>
+    <button class="lvl" data-lvl="muy" aria-pressed="false">🔥 Muy difícil</button>
+  </div>
 </header>
 <main>
   <div class="sheet" id="sheet"><img id="pic" alt=""></div>
   <aside>
     <div class="status"><span>Colocadas</span><span class="big" id="count">0 / 0</span></div>
-    <p class="help">Arrastra cada nombre hasta su caja. También puedes tocar un nombre y después tocar la caja.</p>
+    <p class="help" id="help"></p>
+    <p class="msg" id="msg" aria-live="polite"></p>
+    <p class="memo" id="memo"></p>
     <div class="bank" id="bank"></div>
     <button class="reset" id="reset">Empezar de nuevo</button>
   </aside>
@@ -230,13 +256,26 @@ const SETS={
 };
 const $=s=>document.querySelector(s);
 const sheet=$("#sheet"),pic=$("#pic"),bank=$("#bank"),count=$("#count");
+const ALIAS={columna:["columna"],huesos:["huesecillos","huesos del oido","huesos oido medio"],mano:["huesos de la mano","mano","falange"],
+  pabellon:["pabellon","oreja","pabellon auricular"],caracol:["coclea"],conducto:["conducto auditivo externo"],
+  nervios:["nervio olfativo"],nervios_gust:["nervio gustativo"],papilas:["papila gustativa","papilas"],pituitaria:["pituitaria"],
+  fosas:["fosa nasal"],orificios:["orificio nasal"],costillas:["costilla"],cuadriceps:["cuadricep"],biceps:["bicep"],triceps:["tricep"],gemelo:["gemelos"],gluteo:["gluteos"]};
+const LVL_HELP={facil:"Arrastra cada nombre hasta su caja. También puedes tocar un nombre y después tocar la caja.",
+  dificil:"Toca una caja y escribe el nombre. Los nombres de abajo se tachan cuando aciertas.",
+  muy:"Toca una caja y escribe el nombre. ¡Sin ayudas! Tienes que acordarte de todas."};
+const LVL_NAME={facil:"Fácil",dificil:"Difícil",muy:"Muy difícil"};
+let mode="facil";try{const v=localStorage.getItem("nivel");if(LVL_NAME[v])mode=v}catch(e){}
+let typer=null;
 let lastDrop=0,lastWrong={t:0,c:null,z:null},cur="ojo",placed=0,errors=0,selected=null,misses={};
 
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
 
 function load(set){
-  cur=set;placed=0;errors=0;selected=null;misses={};
-  document.body.className=set;
+  cur=set;placed=0;errors=0;selected=null;misses={};closeTyper();
+  document.body.className=set+" lvl-"+mode+(mode==="facil"?"":" typing");
+  document.querySelectorAll(".lvl").forEach(b=>b.setAttribute("aria-pressed",b.dataset.lvl===mode));
+  $("#help").textContent=LVL_HELP[mode];setMsg("");
+  $("#memo").textContent="Escribe de memoria las "+SETS[set].parts.length+" partes. Toca una caja para empezar.";
   document.querySelectorAll(".tab[data-set]").forEach(t=>t.setAttribute("aria-selected",t.dataset.set===set));
   const S=SETS[set];
   sheet.style.setProperty("--ratio",S.ratio);
@@ -251,7 +290,7 @@ function load(set){
     const fit=Math.min(SETS[set].ratio<0.6?6.5:3.1,Math.max(one,two));
     z.style.fontSize="max(10px, min("+fit.toFixed(2)+"cqw, 24px))";
     z.dataset.side=(x+w/2<50)?"flex-start":"flex-end";
-    z.addEventListener("click",()=>{if(selected)tryPlace(selected,z)});
+    z.addEventListener("click",()=>{if(mode!=="facil"){openTyper(z);return}if(selected)tryPlace(selected,z)});
     sheet.appendChild(z);
   });
   bank.innerHTML="";
@@ -259,12 +298,77 @@ function load(set){
     const c=document.createElement("button");
     c.className="chip";c.textContent=p.name;c.dataset.id=p.id;c.dataset.m=p.match||p.id;
     c.style.setProperty("--tilt",(Math.random()*6-3).toFixed(1)+"deg");
-    attachDrag(c);bank.appendChild(c);
+    if(mode==="facil")attachDrag(c);else{c.tabIndex=-1;c.setAttribute("aria-disabled","true")}
+    bank.appendChild(c);
   });
   updateCount();
 }
 
 function updateCount(){count.textContent=placed+" / "+SETS[cur].parts.length}
+
+function markOk(zone,name){
+  zone.innerHTML='<span>'+name+'</span>';
+  zone.style.justifyContent=zone.firstChild.offsetWidth>zone.clientWidth+1?zone.dataset.side:"center";
+  zone.classList.remove("hint","editing");zone.classList.add("ok");
+  zone.setAttribute("aria-label",name+", correcto");zone.disabled=true;
+  placed++;updateCount();
+  if(placed===SETS[cur].parts.length)setTimeout(finish,450);
+}
+function setMsg(t,cls){const m=$("#msg");m.textContent=t;m.className="msg"+(cls?" "+cls:"")}
+function norm(t){return t.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim()}
+function lev(a,b){const d=Array.from({length:a.length+1},(_,i)=>[i]);for(let j=1;j<=b.length;j++)d[0][j]=j;
+  for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[a.length][b.length]}
+function partOf(zone){return SETS[cur].parts.find(p=>p.id===zone.dataset.id)}
+function judge(zone,val){
+  const p=partOf(zone),v=norm(val);if(!v)return null;
+  const opts=[p.name,...(ALIAS[p.id]||[])].map(norm);
+  if(opts.includes(v))return "ok";
+  const tol=n=>n>=10?2:n>=5?1:0;
+  if(opts.some(o=>lev(v,o)<=tol(o.length)))return "casi";
+  return "no";
+}
+function closeTyper(){if(typer){typer.zone.classList.remove("editing");typer.el.remove();typer=null}}
+function openTyper(zone){
+  if(zone.classList.contains("ok"))return;
+  if(typer&&typer.zone===zone){typer.el.focus();return}
+  closeTyper();
+  const el=document.createElement("input");
+  el.className="typer";el.type="text";el.autocomplete="off";el.autocapitalize="sentences";el.spellcheck=false;
+  el.setAttribute("autocorrect","off");el.enterKeyHint="done";el.setAttribute("aria-label","Escribe el nombre de esta parte");
+  const p=partOf(zone),[x,y,w,h]=p.box;
+  el.style.top=(y+h/2)+"%";el.style.width="max("+w+"%, 150px)";
+  if(x+w/2<50)el.style.left=x+"%";else el.style.right=(100-x-w)+"%";
+  const n=misses[zone.dataset.id]||0;
+  if(n>=2)el.placeholder=p.name.slice(0,Math.min(3,p.name.length-1))+"…";else el.placeholder="Escribe aquí";
+  zone.classList.add("editing");sheet.appendChild(el);typer={zone,el,last:""};
+  el.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){e.preventDefault();submit()}
+    else if(e.key==="Escape"){closeTyper()}
+  });
+  el.addEventListener("blur",()=>setTimeout(()=>{if(typer&&typer.el===el&&document.activeElement!==el)closeTyper()},150));
+  el.focus({preventScroll:false});
+}
+function submit(){
+  if(!typer)return;const {zone,el}=typer,val=el.value,r=judge(zone,val);
+  if(r===null){el.classList.remove("bad");void el.offsetWidth;el.classList.add("bad");return}
+  const p=partOf(zone);
+  if(r==="ok"||r==="casi"){
+    closeTyper();markOk(zone,p.name);
+    const chip=[...bank.querySelectorAll(".chip:not(.used)")].find(c=>c.dataset.m===(p.match||p.id));
+    if(chip)chip.classList.add("used");
+    setMsg(r==="ok"?"¡Bien! "+p.name+".":"¡Casi! Se escribe «"+p.name+"».","good");
+    return;
+  }
+  el.classList.remove("bad");void el.offsetWidth;el.classList.add("bad");
+  if(norm(val)===typer.last)return;
+  typer.last=norm(val);errors++;
+  misses[zone.dataset.id]=(misses[zone.dataset.id]||0)+1;
+  const n=misses[zone.dataset.id];
+  if(n>=2){el.value="";el.placeholder=p.name.slice(0,Math.min(3,p.name.length-1))+"…";setMsg("Pista: empieza por «"+p.name.slice(0,Math.min(3,p.name.length-1))+"».","badm")}
+  else{el.select();setMsg("Esa no es. ¡Prueba otra vez!","badm")}
+}
+function setMode(m){if(m===mode)return;mode=m;try{localStorage.setItem("nivel",m)}catch(e){}load(cur)}
+document.querySelectorAll(".lvl").forEach(b=>b.addEventListener("click",()=>setMode(b.dataset.lvl)));
 
 function select(c){
   if(selected)selected.classList.remove("selected");
@@ -278,11 +382,7 @@ function tryPlace(chip,zone){
   sheet.querySelectorAll(".zone").forEach(z=>z.classList.remove("target","over"));
   if(!zone||zone.classList.contains("ok")){chip.classList.remove("selected");selected=null;return}
   if(zone.dataset.m===chip.dataset.m){
-    zone.innerHTML='<span>'+chip.textContent+'</span>';
-    zone.style.justifyContent=zone.firstChild.offsetWidth>zone.clientWidth+1?zone.dataset.side:"center";zone.classList.remove("hint");zone.classList.add("ok");
-    zone.setAttribute("aria-label",chip.textContent+", correcto");zone.disabled=true;
-    chip.remove();selected=null;placed++;updateCount();
-    if(placed===SETS[cur].parts.length)setTimeout(finish,450);
+    markOk(zone,chip.textContent);chip.remove();selected=null;
   }else{
     const now=Date.now();
     if(lastWrong.c===chip&&lastWrong.z===zone&&now-lastWrong.t<800)return;
@@ -338,7 +438,7 @@ function finish(){
   const other=ORDER[(ORDER.indexOf(cur)+1)%ORDER.length];
   $("#doneEmoji").textContent=errors===0?"🏆":"🎉";
   $("#doneTitle").textContent=errors===0?"¡Perfecto!":"¡Muy bien!";
-  $("#doneText").textContent=errors===0?"Todas a la primera. ¡Sin ningún fallo!":"Lo has completado con "+errors+(errors===1?" fallo.":" fallos.");
+  $("#doneText").textContent="Nivel "+LVL_NAME[mode]+". "+(errors===0?"Todas a la primera. ¡Sin ningún fallo!":"Lo has completado con "+errors+(errors===1?" fallo.":" fallos."));
   $("#next").textContent="Ahora "+NAMES[other];
   $("#next").onclick=()=>{$("#done").classList.remove("show");load(other)};
   $("#done").classList.add("show");$("#again").focus();
